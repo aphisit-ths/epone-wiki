@@ -1,0 +1,439 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source_path="${BASH_SOURCE[0]}"
+while [ -L "$source_path" ]; do
+  source_dir="$(cd -P "$(dirname "$source_path")" && pwd)"
+  source_path="$(readlink "$source_path")"
+  [[ "$source_path" != /* ]] && source_path="$source_dir/$source_path"
+done
+
+root_dir="$(cd -P "$(dirname "$source_path")/.." && pwd)"
+
+items=(
+  "req|python|Python|Host: runs pip and Frappe Manager installer"
+  "req|pip|pip|Host: installs Frappe Manager if not using official installer"
+  "req|curl|curl|Host: downloads install scripts and package metadata"
+  "req|docker|Docker|Host: required by Frappe Manager"
+  "req|compose|Docker Compose|Host: required by Frappe Manager services"
+  "req|node|Node.js|Host: required for EP One frontend builds"
+  "req|fm|Frappe Manager|Host: installed in ~/.epone-tools-venv and manages Frappe Docker environments"
+  "rec|git|Git|Host: useful for repository access and troubleshooting"
+  "proj|yarn|Yarn|Project shell: installs and builds EP One frontend assets"
+)
+
+selected=()
+installed=()
+
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  bold=$'\033[1m'
+  dim=$'\033[2m'
+  green=$'\033[32m'
+  yellow=$'\033[33m'
+  cyan=$'\033[36m'
+  reset=$'\033[0m'
+else
+  bold=''
+  dim=''
+  green=''
+  yellow=''
+  cyan=''
+  reset=''
+fi
+
+print_banner() {
+  printf '%s' "$cyan"
+  cat <<'BANNER'
+🚀 Welcome aboard!
+
+███████╗██████╗  ██████╗ ███╗   ██╗███████╗
+██╔════╝██╔══██╗██╔═══██╗████╗  ██║██╔════╝
+█████╗  ██████╔╝██║   ██║██╔██╗ ██║█████╗
+██╔══╝  ██╔═══╝ ██║   ██║██║╚██╗██║██╔══╝
+███████╗██║     ╚██████╔╝██║ ╚████║███████╗
+╚══════╝╚═╝      ╚═════╝ ╚═╝  ╚═══╝╚══════╝
+
+        It Works on My Machine™ ⚡
+BANNER
+  printf '%s\n' "$reset"
+}
+
+show_file() {
+  printf '\n'
+  cat "$root_dir/resources/$1"
+  printf '\n'
+}
+
+open_file() {
+  local file="$1"
+  if [ "${EPONE_TEST_OPEN:-1}" = "0" ]; then
+    printf '\nOpen this file in your browser:\n%s\n\n' "$file"
+    return 0
+  elif command -v open >/dev/null 2>&1; then
+    open "$file"
+  elif command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$file"
+  elif command -v wslview >/dev/null 2>&1; then
+    wslview "$file"
+  else
+    printf '\nOpen this file in your browser:\n%s\n\n' "$file"
+    return 0
+  fi
+  printf '\nOpened %s\n\n' "$file"
+}
+
+html_escape() {
+  sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'
+}
+
+inline_markdown() {
+  sed -E 's#`([^`]*)`#<code>\1</code>#g; s#\[([^]]+)\]\(([^)]+)\)#<a href="\2">\1</a>#g'
+}
+
+html_id() {
+  tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-//; s/-$//'
+}
+
+render_markdown() {
+  local markdown="$1" html="$2" title="$3" line escaped in_code=0 in_list=0
+  mkdir -p "$(dirname "$html")"
+
+  {
+    cat <<HTML
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>$title</title>
+  <style>
+    :root { color-scheme: light; --ink: #17202a; --muted: #5b6673; --line: #d8dee4; --paper: #fff; --wash: #f6f8fa; --brand: #0969da; --code: #0d1117; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; line-height: 1.58; color: var(--ink); background: var(--wash); }
+    main { max-width: 980px; margin: 0 auto; padding: 42px 24px 76px; background: var(--paper); min-height: 100vh; }
+    h1 { margin: 0 0 10px; font-size: clamp(30px, 5vw, 44px); line-height: 1.1; }
+    h2 { margin-top: 38px; border-bottom: 1px solid var(--line); padding-bottom: 7px; }
+    h3 { margin-top: 26px; }
+    p { margin: 12px 0; }
+    a { color: var(--brand); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+    ul { padding-left: 24px; }
+    li { margin: 7px 0; }
+    code { background: #eef2f7; padding: 2px 6px; border-radius: 4px; font-size: 0.94em; }
+    pre { background: var(--code); color: #e6edf3; padding: 14px 16px; border-radius: 6px; overflow-x: auto; }
+    pre code { background: transparent; padding: 0; color: inherit; }
+    hr { border: 0; border-top: 1px solid var(--line); margin: 28px 0; }
+    .doc-label { color: var(--muted); font-size: 13px; margin-bottom: 28px; text-transform: uppercase; letter-spacing: .08em; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="doc-label">EP One docs</div>
+HTML
+
+    while IFS= read -r line || [ -n "$line" ]; do
+      if [ "$line" = '```' ]; then
+        if [ "$in_code" = "1" ]; then
+          printf '</code></pre>\n'
+          in_code=0
+        else
+          [ "$in_list" = "1" ] && printf '</ul>\n' && in_list=0
+          printf '<pre><code>'
+          in_code=1
+        fi
+        continue
+      fi
+
+      if [ "$in_code" = "1" ]; then
+        printf '%s\n' "$line" | html_escape
+        continue
+      fi
+
+      case "$line" in
+        '')
+          [ "$in_list" = "1" ] && printf '</ul>\n' && in_list=0
+          ;;
+        '---')
+          [ "$in_list" = "1" ] && printf '</ul>\n' && in_list=0
+          printf '<hr>\n'
+          ;;
+        '### '*)
+          [ "$in_list" = "1" ] && printf '</ul>\n' && in_list=0
+          escaped="$(printf '%s' "${line#'### '}" | html_escape | inline_markdown)"
+          printf '<h3 id="%s">%s</h3>\n' "$(printf '%s' "$escaped" | sed -E 's/<[^>]*>//g' | html_id)" "$escaped"
+          ;;
+        '## '*)
+          [ "$in_list" = "1" ] && printf '</ul>\n' && in_list=0
+          escaped="$(printf '%s' "${line#'## '}" | html_escape | inline_markdown)"
+          printf '<h2 id="%s">%s</h2>\n' "$(printf '%s' "$escaped" | sed -E 's/<[^>]*>//g' | html_id)" "$escaped"
+          ;;
+        '# '*)
+          [ "$in_list" = "1" ] && printf '</ul>\n' && in_list=0
+          escaped="$(printf '%s' "${line#'# '}" | html_escape | inline_markdown)"
+          printf '<h1 id="%s">%s</h1>\n' "$(printf '%s' "$escaped" | sed -E 's/<[^>]*>//g' | html_id)" "$escaped"
+          ;;
+        '- '*)
+          [ "$in_list" = "0" ] && printf '<ul>\n' && in_list=1
+          escaped="$(printf '%s' "${line#'- '}" | html_escape | inline_markdown)"
+          printf '<li>%s</li>\n' "$escaped"
+          ;;
+        *)
+          [ "$in_list" = "1" ] && printf '</ul>\n' && in_list=0
+          escaped="$(printf '%s' "$line" | html_escape | inline_markdown)"
+          printf '<p>%s</p>\n' "$escaped"
+          ;;
+      esac
+    done < "$markdown"
+
+    [ "$in_list" = "1" ] && printf '</ul>\n'
+    [ "$in_code" = "1" ] && printf '</code></pre>\n'
+    cat <<'HTML'
+  </main>
+</body>
+</html>
+HTML
+  } > "$html"
+}
+
+open_markdown() {
+  local markdown="$root_dir/resources/$1" title="$2" html="/tmp/epone-tools/${1%.md}.html"
+  render_markdown "$markdown" "$html" "$title"
+  open_file "$html"
+}
+
+print_status_summary() {
+  local i group req_total=0 req_ready=0 proj_total=0 proj_ready=0
+  refresh_status
+  for i in "${!items[@]}"; do
+    group="$(field "${items[$i]}" 1)"
+    case "$group" in
+      req)
+        req_total=$((req_total + 1))
+        [ "${installed[$i]}" = "1" ] && req_ready=$((req_ready + 1))
+        ;;
+      proj)
+        proj_total=$((proj_total + 1))
+        [ "${installed[$i]}" = "1" ] && proj_ready=$((proj_ready + 1))
+        ;;
+    esac
+  done
+
+  printf '%sStatus:%s required host %s%d/%d%s ready, project shell %s%d/%d%s ready\n\n' "$bold" "$reset" "$green" "$req_ready" "$req_total" "$reset" "$green" "$proj_ready" "$proj_total" "$reset"
+}
+
+field() {
+  local item="$1" index="$2"
+  cut -d'|' -f"$index" <<<"$item"
+}
+
+is_wsl() {
+  grep -qi microsoft /proc/version 2>/dev/null
+}
+
+os_kind() {
+  case "$(uname -s)" in
+    Darwin) printf 'macos' ;;
+    Linux)
+      if is_wsl; then
+        printf 'wsl'
+      else
+        printf 'linux'
+      fi
+      ;;
+    *) printf 'unknown' ;;
+  esac
+}
+
+has_brew() {
+  command -v brew >/dev/null 2>&1
+}
+
+is_installed() {
+  local id="$1"
+  case "$id" in
+    python) command -v python3 >/dev/null 2>&1 ;;
+    pip) command -v pip3 >/dev/null 2>&1 ;;
+    compose) docker compose version >/dev/null 2>&1 ;;
+    fm) command -v fm >/dev/null 2>&1 || [ -x "$HOME/.epone-tools-venv/bin/fm" ] ;;
+    *) command -v "$id" >/dev/null 2>&1 ;;
+  esac
+}
+
+refresh_status() {
+  local i id
+  installed=()
+  for i in "${!items[@]}"; do
+    id="$(field "${items[$i]}" 2)"
+    if is_installed "$id"; then
+      installed+=(1)
+    else
+      installed+=(0)
+    fi
+  done
+}
+
+install_commands() {
+  local id="$1" os="$2"
+
+  case "$id:$os" in
+    python:macos|pip:macos) has_brew && printf 'brew install python\n' || printf 'Install Homebrew first: https://brew.sh\n' ;;
+    python:wsl|python:linux|pip:wsl|pip:linux) printf 'sudo apt update && sudo apt install -y python3 python3-pip python3-venv\n' ;;
+    curl:macos) printf 'curl is included with macOS.\n' ;;
+    curl:wsl|curl:linux) printf 'sudo apt update && sudo apt install -y curl\n' ;;
+    node:macos) has_brew && printf 'brew install node\n' || printf 'Install Homebrew first: https://brew.sh\n' ;;
+    node:wsl|node:linux) printf 'sudo apt update && sudo apt install -y nodejs npm\n' ;;
+    yarn:*) printf 'npm install -g yarn\n' ;;
+    fm:*) printf 'python3 -m venv "$HOME/.epone-tools-venv" && "$HOME/.epone-tools-venv/bin/pip" install frappe-manager && mkdir -p "$HOME/.local/bin" && ln -sf "$HOME/.epone-tools-venv/bin/fm" "$HOME/.local/bin/fm"\n' ;;
+    git:macos) has_brew && printf 'brew install git\n' || printf 'Install Homebrew first: https://brew.sh\n' ;;
+    git:wsl|git:linux) printf 'sudo apt update && sudo apt install -y git\n' ;;
+    docker:wsl) printf 'Install Docker Desktop on Windows, then enable WSL integration for this distro.\n' ;;
+    docker:macos) printf 'Install Docker Desktop: https://www.docker.com/products/docker-desktop/\n' ;;
+    docker:linux) printf 'Install Docker for your distro: https://docs.docker.com/engine/install/\n' ;;
+    compose:wsl) printf 'Docker Compose is included with Docker Desktop WSL integration.\n' ;;
+    compose:macos) printf 'Docker Compose is included with Docker Desktop.\n' ;;
+    compose:linux) printf 'Install the Docker Compose plugin: https://docs.docker.com/compose/install/linux/\n' ;;
+    *) printf 'No install command for %s on %s\n' "$id" "$os" ;;
+  esac
+}
+
+run_command() {
+  local cmd="$1"
+  [[ "$cmd" == Install* || "$cmd" == Docker\ Compose* || "$cmd" == curl\ is* || "$cmd" == No\ install* ]] && return 0
+  printf '\n$ %s\n' "$cmd"
+  if [ "${EPONE_TEST:-}" = "1" ]; then
+    return 0
+  fi
+  bash -lc "$cmd"
+}
+
+draw_checklist() {
+  local cursor="$1" i group name note mark pointer
+  printf '\033[H\033[2J'
+  print_banner
+  printf '%sInstall required programs%s\n\n' "$bold" "$reset"
+  printf '%sUse Up/Down, space, a=select all, enter=continue, q=cancel%s\n' "$dim" "$reset"
+  printf '%sFallback: type numbers like 1 3 5, a, or enter%s\n\n' "$dim" "$reset"
+
+  for i in "${!items[@]}"; do
+    group="$(field "${items[$i]}" 1)"
+    name="$(field "${items[$i]}" 3)"
+    note="$(field "${items[$i]}" 4)"
+    [ "$i" -eq "$cursor" ] && pointer='>' || pointer=' '
+    [ "${selected[$i]}" = "1" ] && mark='x' || mark=' '
+    printf '%s [%s] %2d. %s%s%s' "$pointer" "$mark" "$((i + 1))" "$bold" "$name" "$reset"
+    [ "$group" = "req" ] && printf ' %s[required]%s' "$yellow" "$reset"
+    [ "$group" = "rec" ] && printf ' %s[recommended]%s' "$dim" "$reset"
+    [ "$group" = "proj" ] && printf ' %s[project-shell]%s' "$cyan" "$reset"
+    [ "${installed[$i]}" = "1" ] && printf ' %s[installed]%s' "$green" "$reset"
+    printf '\n    %s%s%s\n' "$dim" "$note" "$reset"
+  done
+}
+
+checklist() {
+  local cursor=0 key rest number
+  selected=()
+  for _ in "${items[@]}"; do selected+=(0); done
+  refresh_status
+
+  while true; do
+    draw_checklist "$cursor"
+    IFS= read -rsn1 key || return 1
+    case "$key" in
+      '') return 0 ;;
+      ' ') selected[$cursor]=$((1 - selected[$cursor])) ;;
+      a|A) for number in "${!selected[@]}"; do selected[$number]=1; done ;;
+      q|Q) [ -t 0 ] || read -r _ || true; return 1 ;;
+      $'\x1b')
+        IFS= read -rsn2 -t 1 rest || true
+        case "$rest" in
+          '[A') ((cursor > 0)) && cursor=$((cursor - 1)) ;;
+          '[B') ((cursor < ${#items[@]} - 1)) && cursor=$((cursor + 1)) ;;
+        esac
+        ;;
+      [0-9])
+        read -r rest
+        number="${key}${rest}"
+        if [[ "$number" =~ ^[0-9]+$ ]] && [ "$number" -ge 1 ] && [ "$number" -le "${#items[@]}" ]; then
+          selected[$((number - 1))]=$((1 - selected[$((number - 1))]))
+        fi
+        ;;
+    esac
+  done
+}
+
+choose_mode() {
+  local mode
+  printf '\nInstall mode\n' >&2
+  printf '1. safe (preview + confirm)\n' >&2
+  printf '2. yolo (run selected installs)\n' >&2
+  read -r -p 'Select [1]: ' mode
+  [ "$mode" = "2" ] && printf 'yolo' || printf 'safe'
+}
+
+install_selected() {
+  local mode os i item id name cmd has_any=0
+  os="$(os_kind)"
+  mode="$(choose_mode)"
+
+  printf '\nOS: %s\n' "$os"
+  printf '\nPlan:\n'
+  for i in "${!items[@]}"; do
+    [ "${selected[$i]}" = "1" ] || continue
+    has_any=1
+    item="${items[$i]}"
+    id="$(field "$item" 2)"
+    name="$(field "$item" 3)"
+    if is_installed "$id"; then
+      printf '%s\n' "- $name: installed, skip"
+    else
+      cmd="$(install_commands "$id" "$os")"
+      printf '%s\n' "- $name: $cmd"
+    fi
+  done
+
+  [ "$has_any" = "1" ] || { printf '\nNothing selected.\n'; return 0; }
+
+  if [ "$mode" = "safe" ]; then
+    read -r -p $'\nRun these commands? [y/N] ' confirm
+    [[ "$confirm" =~ ^[Yy]$ ]] || return 0
+  fi
+
+  for i in "${!items[@]}"; do
+    [ "${selected[$i]}" = "1" ] || continue
+    item="${items[$i]}"
+    id="$(field "$item" 2)"
+    is_installed "$id" && continue
+    cmd="$(install_commands "$id" "$os")"
+    run_command "$cmd"
+  done
+}
+
+install_menu() {
+  checklist || { printf '\nCancelled.\n'; return 0; }
+  install_selected
+}
+
+main() {
+  while true; do
+    print_banner
+    print_status_summary
+    cat <<'MENU'
+EP One newcomer tools
+
+1. Dev wiki
+2. Manual setup
+3. Install required programs
+0. Exit
+
+MENU
+    read -r -p "Select: " choice
+
+    case "$choice" in
+      1) open_markdown dev-wiki.md "EP One Dev Wiki" ;;
+      2) open_markdown manual-setup.md "Manual Setup EP One" ;;
+      3) install_menu ;;
+      0|q|quit|exit) exit 0 ;;
+      *) printf '\nInvalid choice\n\n' ;;
+    esac
+  done
+}
+
+main "$@"
