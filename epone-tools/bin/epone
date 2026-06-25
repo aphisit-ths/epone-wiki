@@ -19,7 +19,7 @@ items=(
   "req|node|Node.js|Host: required for EP One frontend builds"
   "req|fm|Frappe Manager|Host: installed in ~/.epone-tools-venv and manages Frappe Docker environments"
   "rec|git|Git|Host: useful for repository access and troubleshooting"
-  "proj|yarn|Yarn|Project shell: installs and builds EP One frontend assets"
+  "req|yarn|Yarn|Host/project shell: installs and builds EP One frontend assets"
 )
 
 selected=()
@@ -257,6 +257,17 @@ is_installed() {
   esac
 }
 
+fm_bin() {
+  command -v fm 2>/dev/null || [ ! -x "$HOME/.epone-tools-venv/bin/fm" ] || printf '%s\n' "$HOME/.epone-tools-venv/bin/fm"
+}
+
+check_local_bin_path() {
+  case ":$PATH:" in
+    *":$HOME/.local/bin:"*) ;;
+    *) printf '\nAdd ~/.local/bin to PATH:\n  export PATH="$HOME/.local/bin:$PATH"\n' ;;
+  esac
+}
+
 refresh_status() {
   local i id
   installed=()
@@ -302,6 +313,34 @@ run_command() {
     return 0
   fi
   bash -lc "$cmd"
+}
+
+update_fm_images() {
+  local fm
+  check_local_bin_path
+  fm="$(fm_bin)"
+  [ -n "$fm" ] || return 0
+  printf '\n$ %s --version\n' "$fm"
+  [ "${EPONE_TEST:-}" = "1" ] || "$fm" --version
+  printf '\n$ %s self update-images\n' "$fm"
+  [ "${EPONE_TEST:-}" = "1" ] || "$fm" self update-images
+}
+
+print_versions() {
+  printf '\nVersions:\n'
+  is_installed python && python3 --version || printf '%s\n' '- Python: missing'
+  is_installed pip && pip3 --version || printf '%s\n' '- pip: missing'
+  is_installed curl && curl --version | head -n1 || printf '%s\n' '- curl: missing'
+  is_installed docker && docker --version || printf '%s\n' '- Docker: missing'
+  is_installed compose && docker compose version || printf '%s\n' '- Docker Compose: missing'
+  is_installed node && node --version || printf '%s\n' '- Node.js: missing'
+  if is_installed fm; then
+    "$(fm_bin)" --version
+  else
+    printf '%s\n' '- Frappe Manager: missing'
+  fi
+  is_installed git && git --version || printf '%s\n' '- Git: missing'
+  is_installed yarn && yarn --version || printf '%s\n' '- Yarn: missing'
 }
 
 draw_checklist() {
@@ -400,15 +439,27 @@ install_selected() {
     [ "${selected[$i]}" = "1" ] || continue
     item="${items[$i]}"
     id="$(field "$item" 2)"
-    is_installed "$id" && continue
+    if is_installed "$id"; then
+      [ "$id" = "fm" ] && update_fm_images
+      continue
+    fi
     cmd="$(install_commands "$id" "$os")"
     run_command "$cmd"
+    [ "$id" = "fm" ] && update_fm_images
   done
+  refresh_status
+  print_versions
 }
 
 install_menu() {
   checklist || { printf '\nCancelled.\n'; return 0; }
   install_selected
+}
+
+auto_setup() {
+  local setup="$root_dir/../install-epone-all/setup.sh"
+  [ -x "$setup" ] || chmod +x "$setup"
+  "$setup"
 }
 
 main() {
@@ -421,6 +472,7 @@ EP One newcomer tools
 1. Dev wiki
 2. Manual setup
 3. Install required programs
+4. Auto setup EP One
 0. Exit
 
 MENU
@@ -430,6 +482,7 @@ MENU
       1) open_markdown dev-wiki.md "EP One Dev Wiki" ;;
       2) open_markdown manual-setup.md "Manual Setup EP One" ;;
       3) install_menu ;;
+      4) auto_setup ;;
       0|q|quit|exit) exit 0 ;;
       *) printf '\nInvalid choice\n\n' ;;
     esac

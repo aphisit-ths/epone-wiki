@@ -94,7 +94,13 @@ fi
 print_status "Step 2: Generating install.sh..."
 
 SITE_FOLDER="${APP_NAME}.localhost"
-INSTALL_PATH="${FRAPPE_SITES_PATH}/${SITE_FOLDER}/workspace/frappe-bench/install.sh"
+BENCH_PATH=$(find "$HOME" -type d -path "*/${SITE_FOLDER}/workspace/frappe-bench" -print -quit 2>/dev/null || true)
+if [[ -z "$BENCH_PATH" ]]; then
+    print_error "Could not find frappe-bench for ${SITE_FOLDER}"
+    print_error "Expected path matching: */${SITE_FOLDER}/workspace/frappe-bench"
+    exit 1
+fi
+INSTALL_PATH="${BENCH_PATH}/install.sh"
 
 cat > "$INSTALL_PATH" << 'SCRIPT_START'
 #!/bin/bash
@@ -225,7 +231,7 @@ print_success "install.sh created at workspace/frappe-bench/"
 
 # Step 3: Generate Makefile
 print_status "Step 3: Generating Makefile..."
-MAKEFILE_PATH="${FRAPPE_SITES_PATH}/${SITE_FOLDER}/workspace/frappe-bench/Makefile"
+MAKEFILE_PATH="${BENCH_PATH}/Makefile"
 
 cat > "$MAKEFILE_PATH" << 'MAKEFILE_END'
 # Makefile for Frappe Bench Commands
