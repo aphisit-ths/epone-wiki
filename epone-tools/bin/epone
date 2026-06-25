@@ -247,12 +247,12 @@ has_brew() {
 }
 
 is_installed() {
-  local id="$1"
+  local id="$1" fm
   case "$id" in
     python) command -v python3 >/dev/null 2>&1 ;;
     pip) command -v pip3 >/dev/null 2>&1 ;;
     compose) docker compose version >/dev/null 2>&1 ;;
-    fm) command -v fm >/dev/null 2>&1 || [ -x "$HOME/.epone-tools-venv/bin/fm" ] ;;
+    fm) fm="$(fm_bin)" && [ -n "$fm" ] && "$fm" --version >/dev/null 2>&1 ;;
     *) command -v "$id" >/dev/null 2>&1 ;;
   esac
 }
@@ -292,7 +292,7 @@ install_commands() {
     node:macos) has_brew && printf 'brew install node\n' || printf 'Install Homebrew first: https://brew.sh\n' ;;
     node:wsl|node:linux) printf 'sudo apt update && sudo apt install -y nodejs npm\n' ;;
     yarn:*) printf 'npm install -g yarn\n' ;;
-    fm:*) printf 'python3 -m venv "$HOME/.epone-tools-venv" && "$HOME/.epone-tools-venv/bin/pip" install frappe-manager && mkdir -p "$HOME/.local/bin" && ln -sf "$HOME/.epone-tools-venv/bin/fm" "$HOME/.local/bin/fm"\n' ;;
+    fm:*) printf 'python3 -m venv "$HOME/.epone-tools-venv" && "$HOME/.epone-tools-venv/bin/pip" install "pyOpenSSL<25" frappe-manager && mkdir -p "$HOME/.local/bin" && ln -sf "$HOME/.epone-tools-venv/bin/fm" "$HOME/.local/bin/fm"\n' ;;
     git:macos) has_brew && printf 'brew install git\n' || printf 'Install Homebrew first: https://brew.sh\n' ;;
     git:wsl|git:linux) printf 'sudo apt update && sudo apt install -y git\n' ;;
     docker:wsl) printf 'Install Docker Desktop on Windows, then enable WSL integration for this distro.\n' ;;
